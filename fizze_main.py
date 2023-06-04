@@ -1,3 +1,4 @@
+import sys
 import json
 import math
 import numpy as np
@@ -6,9 +7,9 @@ import matplotlib.pyplot as plt
 REPLAY_JSON = None
 VEL_CHECK_TIME = float(0.05)
 
-def LoadReplay():
+def LoadReplay(file):
     global REPLAY_JSON
-    with open('replay.txt') as f:
+    with open(file) as f:
         replay = f.readlines()
         
     REPLAY_JSON = json.loads(replay[0])
@@ -26,11 +27,11 @@ def DevideVec2(vec, num):
     
     return [num0, num1]
 
-def main():
+def main(file):
     global REPLAY_JSON
     global VEL_CHECK_TIME
     
-    LoadReplay()
+    LoadReplay(file=file)
     
     j = 0
     # looping over all the players
@@ -188,7 +189,11 @@ def GenGraph(velocitys, Names):
     #         linestyle = 'dashed')
     
     plt.scatter( x, y, marker = 'o', s = 25, color = 'red')
-    plt.savefig(f"./AutoGraphs/{Names}.png")
+    save = input("Save figure? (y/n): ")
+    if save == "y":
+        plt.savefig(f"./AutoGraphs/{Names}.png")
+    plt.show()
 
 if __name__ == "__main__":
-    main()
+    file = "replay_files\PRETSOD3-8-2023+9-16-42+PM+-+Copy.txt"
+    main(file)

@@ -22,11 +22,21 @@ class ReplayStats:
         del movement_df
 
         self.num_timesteps = self.full_df['headLen'].iloc[0]
-        self.sampling_rate = 20 # Hz
+        self.Hz = 20 
+        self.sampling_rate = 1 / self.Hz # reciprocal of Hz
 
 
     def get_fields(self):
-        print("All fields:", self.full_df.columns)
+        return self.full_df.columns
+
+
+    def get_players(self):
+        return self.full_df['Name'].values
+
+
+    def get_recording_duration(self):
+        print(f"Total number of timesteps: {self.num_timesteps}")
+        return self.num_timesteps * self.sampling_rate
 
 
     def _calculate_lateral_velocities(self, name):
@@ -43,7 +53,7 @@ class ReplayStats:
             coord1 = np.array([x1, z1])
             coord2 = np.array([x2, z2])
 
-            distance = np.linalg.norm(coord2 - coord1)
+            distance = np.linalg.norm(coord2 - coord1) / self.Hz
             velocities.append(distance)
 
         return velocities
@@ -56,6 +66,33 @@ class ReplayStats:
             all_velocities.append(player_velocities)
 
         self.full_df['Velocities'] = all_velocities
+        print("Lateral velocities calculated for all players.")
+
+    
+    def test_calc_vel(self):
+        velocities = []
+        dt = self.sampling_rate
+        z_pos = self.full_df.loc[self.full_df['Name'] == 'ZAINN', 'headPositions'].to_list()
+        x = z_pos.apply(lambda row: row[::3])
+        z = z_pos.apply(lambda row: row[2::3])
+
+        x = x.to_list()
+        z = z.to_list()
+
+        positions = np.array(list(zip(x, z)))
+
+        diff = np.diff(positions, axis=0)
+
+        velocities = diff / dt
+
+        magnitudes = np.linalg.norm(velocities, axis=1)
+
+        mini = np.min(magnitudes)
+        maxi = np.max(magnitudes)
+        avg = np.mean(magnitudes)
+        std = np.std(magnitudes)
+
+        return mini, maxi, avg, std
         
         
     def _get_velocity_statistics(self, row):
