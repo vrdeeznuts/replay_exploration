@@ -36,7 +36,7 @@ class Replay:
                     if isinstance(n_v, list) and len(n_v) > 0 and isinstance(n_v[0], dict): # and isinstance(n_v[0], dict):
                         print("yes") 
     
-    def generate_player_stats(self):
+    def generate_player_stats(self, verbose=False):
         players_dicts = [player_dict for player_dict in self.data['players']]
         playerDatas_dicts = [data_dict for data_dict in self.data['playerDatas']]
 
@@ -53,9 +53,11 @@ class Replay:
         for playerData in playerDatas_dicts:
             player_stats = PlayerStats(playerData, self.hz)
             self.players_stats.append(player_stats)
-            print(f"[INFO] PlayerStats created for id: {playerData['id']}, name: {playerData['Name']}...")
+            if verbose:
+                print(f"[INFO] PlayerStats created for id: {playerData['id']}, name: {playerData['Name']}...")
 
-        print("[INFO] Done generating PlayerStats.")
+        if verbose:
+            print("[INFO] Done generating PlayerStats.")
 
 
     def join_duplicate_ids(self, all_players):
@@ -73,7 +75,13 @@ class PlayerStats:
         self.actornumber = playerDatas_dict['actorNumber']
         self.name = playerDatas_dict['Name']
         self.color = playerDatas_dict['color']
+        self.join_times = playerDatas_dict['JoinTimes']
+        self.leave_times = playerDatas_dict['LeaveTimes']
+        self.raw_tag_times = True
+        self.tag_times = playerDatas_dict['tagstimes']
+
         self.hz = hz
+        self.untagged_speed_threshold = 11
 
         # head
         self.headLen = playerDatas_dict['movementData']['headLen']
@@ -110,6 +118,31 @@ class PlayerStats:
         return self.id == other.id and self.actornumber == other.actornumber
     
 
+    def _parse_tag_times(self):
+        self.calculate_lateral_velocities()
+
+        # tag_times structure: [ts, tagged_bool, ts, tagged_bool, ...]
+        # times = np.array(self.tag_times[::2]) / 100. # convert times to index of speeds
+        time_idxs = np.array(self.tag_times[::2]) / 5 # convert timestamp to index of speeds
+        tagged_bool = np.array(self.tag_times[1::2])
+
+        infected_start = None
+        pruned_speeds = []
+        for i in range(len(time_idxs)):
+            if tagged_bool[i]:
+                if infected_start is None:
+                    infected_start = time_idxs[i]
+            elif not tagged_bool[i] and infected_start is not None:
+                infected_end = time_idxs[i]
+                pruned_speeds.extend(self.speeds[infected_start:infected_end])
+                infected_start = None
+
+        if infected_start is not None:
+            pruned_speeds.extend(self.speeds[infected_start:])
+
+        self.pruned_speeds = pd.Series(pruned_speeds)
+    
+
     def _parse_positions(self):
         x = self.headPositions[::3]
         y = self.headPositions[1::3]
@@ -126,7 +159,14 @@ class PlayerStats:
         return x, y, z
     
 
-    def calculate_lateral_velocities(self, history=9):
+    def calculate_lateral_velocities(self):
+        if not hasattr(self, 'speeds'):
+            self._calculate_lateral_velocities()
+        
+        assert hasattr(self, 'speeds'), "You haven't calculated player speeds yet!"
+    
+
+    def _calculate_lateral_velocities(self, history=9):
         xpos, ypos, zpos = self._parse_positions()
         df = pd.DataFrame({'x': xpos, 'y': ypos, 'z': zpos})
         
@@ -135,20 +175,24 @@ class PlayerStats:
         df['speed'] = df['cumulative_distance'] / (history * (1 / self.hz))
 
         self.speeds = df['speed']
-    
 
-    def plot_velocities_kde(self, save=False):
-        if not hasattr(self, 'speeds'):
-            self.calculate_lateral_velocities()
-            assert hasattr(self, 'speeds')
+
+    def plot_velocities_kde(self, include_lava=False, save=False):
+        self.calculate_lateral_velocities()
+
+        if not include_lava:
+            self._parse_tag_times()
+            speeds = self.pruned_speeds
+        else:
+            speeds = self.speeds
 
         plt.figure(figsize=(21, 9))
 
         # remove super large velocities
-        pruned_speeds = self.speeds[(self.speeds > 0) & (self.speeds < 11)]
+        speeds_in_range = speeds[(speeds > 0) & (speeds < self.untagged_speed_threshold)]
 
-        sns.kdeplot(pruned_speeds, color='blue', shade=True)
-        plt.title(f"{self.name}'s Velocity (Kernel Density Estimate) over {len(pruned_speeds) / 20} seconds")
+        sns.kdeplot(speeds_in_range, color='blue', shade=True)
+        plt.title(f"{self.name}'s Velocity (Kernel Density Estimate) over {len(speeds_in_range) / 20} seconds")
         plt.xlabel("Speed (units/s)")
         plt.ylabel("Density Estimate")
         plt.show()
@@ -163,24 +207,28 @@ class PlayerStats:
             print(f"[INFO] Plot saved as: {plot_path}.")
 
 
-    def plot_velocities_pdf(self, save=False):
+    def plot_velocities_pdf(self, include_lava=False, save=False):
         def pdf(x):
             y = 1 / (x.std() * np.sqrt(2 * np.pi)) * np.exp(-(x - x.mean())**2 / (2 * x.std()**2))
             return y
         
-        if not hasattr(self, 'speeds'):
-            self.calculate_lateral_velocities()
-            assert hasattr(self, 'speeds')
+        self.calculate_lateral_velocities()
+
+        if not include_lava:
+            self._parse_tag_times()
+            speeds = self.pruned_speeds
+        else:
+            speeds = self.speeds
 
         plt.figure(figsize=(21, 9))
 
         # remove super large velocities
-        pruned_speeds = self.speeds[(self.speeds > 0) & (self.speeds < 11)]
+        speeds_in_range = speeds[(speeds > 0) & (speeds < 11)]
         
-        y = pdf(pruned_speeds)
+        y = pdf(speeds_in_range)
 
-        plt.scatter(pruned_speeds, y, s=25, color='blue')
-        plt.title(f"{self.name}'s Velocity (Probability Density Function) over {len(pruned_speeds) / 20} seconds")
+        plt.scatter(speeds_in_range, y, s=25, color='blue')
+        plt.title(f"{self.name}'s Velocity (Probability Density Function) over {len(speeds_in_range) / 20} seconds")
         plt.xlabel("Speed (units/s)")
         plt.ylabel("Density Estimate")
         plt.show()
