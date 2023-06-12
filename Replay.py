@@ -23,6 +23,8 @@ class Replay:
         self.version = data["FormatVersion"]
         self.duration = datetime.timedelta(seconds=data['FinalTime'] / self.hz) # recording duration in seconds
 
+        self.players_stats = self.generate_player_stats()
+
 
     def get_fields(self):
         for k, v in self.data.items():
@@ -48,16 +50,18 @@ class Replay:
             pd_d['JoinTimes'] = pl_d['JoinTimes']
             pd_d['LeaveTimes'] = pl_d['LeaveTimes']
 
-        self.players_stats = []
+        players_stats = []
 
         for playerData in playerDatas_dicts:
             player_stats = PlayerStats(playerData, self.hz)
-            self.players_stats.append(player_stats)
+            players_stats.append(player_stats)
             if verbose:
                 print(f"[INFO] PlayerStats created for id: {playerData['id']}, name: {playerData['Name']}...")
 
         if verbose:
             print("[INFO] Done generating PlayerStats.")
+
+        return players_stats
 
 
     def join_duplicate_ids(self, all_players):
@@ -66,8 +70,6 @@ class Replay:
         pass
         
         
-        
-
 class PlayerStats:
     def __init__(self, playerDatas_dict, hz):
         # info
@@ -101,6 +103,28 @@ class PlayerStats:
         self.leftHandRotLen = playerDatas_dict['movementData']['leftHandRotLen']
         self.leftHandRot = playerDatas_dict['movementData']['leftHandRot']
 
+        # calculations
+        self.smooth_speeds = self.calculate_lateral_velocities()
+        self.raw_speeds = self.calculate_lateral_velocities(raw=True)
+        self.pruned_smooth_speeds = self.parse_tag_times()
+        self.pruned_raw_speeds = self.parse_tag_times(raw=True)
+
+        # utilities
+        self.speeds_mapping = {
+            (True, True): self.raw_speeds,
+            (False, True): self.pruned_raw_speeds,
+            (True, False): self.smooth_speeds,
+            (False, False): self.pruned_smooth_speeds
+        } # first bool is include_lava, second is raw
+        self.colors = sns.color_palette('Set2', n_colors=4)
+        self.color_mapping = {
+            (True, True): self.colors[0],
+            (False, True): self.colors[1],
+            (True, False): self.colors[2],
+            (False, False): self.colors[3]
+        }
+
+
     def __repr__(self):
             return f"PlayerStats(id={self.id}, name(s)={self.names})"
         
@@ -115,11 +139,14 @@ class PlayerStats:
         return self.headLen
 
     def __eq__(self, other):
-        return self.id == other.id and self.actornumber == other.actornumber
+        return self.id == other.id # and self.actornumber == other.actornumber
     
 
-    def _parse_tag_times(self):
-        self.calculate_lateral_velocities()
+    def parse_tag_times(self, raw=False):
+        if raw:
+            speeds = self.raw_speeds
+        else:
+            speeds = self.smooth_speeds
 
         # tag_times structure: [ts, tagged_bool, ts, tagged_bool, ...]
         # times = np.array(self.tag_times[::2]) / 100. # convert times to index of speeds
@@ -134,13 +161,13 @@ class PlayerStats:
                     infected_start = time_idxs[i]
             elif not tagged_bool[i] and infected_start is not None:
                 infected_end = time_idxs[i]
-                pruned_speeds.extend(self.speeds[infected_start:infected_end])
+                pruned_speeds.extend(speeds[int(infected_start):int(infected_end)])
                 infected_start = None
 
         if infected_start is not None:
-            pruned_speeds.extend(self.speeds[infected_start:])
+            pruned_speeds.extend(speeds[int(infected_start):])
 
-        self.pruned_speeds = pd.Series(pruned_speeds)
+        return pd.Series(pruned_speeds)
     
 
     def _parse_positions(self):
@@ -159,11 +186,41 @@ class PlayerStats:
         return x, y, z
     
 
-    def calculate_lateral_velocities(self):
-        if not hasattr(self, 'speeds'):
-            self._calculate_lateral_velocities()
+    def player_statistics(self):
+        title = f"{self.name} (id: {self.id}) Untagged Monke Statistics"
+
+        raw_min = self.pruned_raw_speeds.min()
+        raw_avg = self.pruned_raw_speeds.mean()
+        raw_max = self.pruned_raw_speeds.max()
+        raw_std = self.pruned_raw_speeds.std()
+
+        smooth_min = self.pruned_smooth_speeds.min()
+        smooth_avg = self.pruned_smooth_speeds.mean()
+        smooth_max = self.pruned_smooth_speeds.max()
+        smooth_std = self.pruned_smooth_speeds.std()
+
+        data = [
+            ['Raw Speed (m/s)', raw_min, raw_avg, raw_max, raw_std],
+            ['Smooth Speed (m/s)', smooth_min, smooth_avg, smooth_max, smooth_std]
+        ]
+
+        headers = ['Min', 'Max', 'Average', 'Std. Dev.']
+
+        table = tabulate(data, headers=headers, tablefmt="simplegrid")
+
+        out = f"{title}\n{table}"
+
+        print(out)
+    
+
+    def calculate_lateral_velocities(self, raw=False):
+        if raw:
+            speed = self._calculate_lateral_velocities_raw()
+        else:
+            speed = self._calculate_lateral_velocities()
+
+        return speed
         
-        assert hasattr(self, 'speeds'), "You haven't calculated player speeds yet!"
     
 
     def _calculate_lateral_velocities(self, history=9):
@@ -174,24 +231,28 @@ class PlayerStats:
         df['cumulative_distance'] = df['distance'].rolling(window=history, min_periods=1).sum()
         df['speed'] = df['cumulative_distance'] / (history * (1 / self.hz))
 
-        self.speeds = df['speed']
+        return df['speed']
+
+    
+    def _calculate_lateral_velocities_raw(self):
+        xpos, ypos, zpos = self._parse_positions()
+        df = pd.DataFrame({'x': xpos, 'y': ypos, 'z': zpos})
+
+        df['distance'] = np.sqrt((df['x'].diff())**2 + (df['z'].diff()**2))
+        df['raw_speed'] = df['distance'] / (1 / self.hz)
+
+        return df['raw_speed']
 
 
-    def plot_velocities_kde(self, include_lava=False, save=False):
-        self.calculate_lateral_velocities()
-
-        if not include_lava:
-            self._parse_tag_times()
-            speeds = self.pruned_speeds
-        else:
-            speeds = self.speeds
+    def plot_velocities_kde(self, include_lava=False, raw=False, save=False):
+        speeds = self.speeds_mapping[(include_lava, raw)]
 
         plt.figure(figsize=(21, 9))
 
         # remove super large velocities
         speeds_in_range = speeds[(speeds > 0) & (speeds < self.untagged_speed_threshold)]
 
-        sns.kdeplot(speeds_in_range, color='blue', shade=True)
+        sns.kdeplot(speeds_in_range, color=self.color_mapping[tuple(speeds)], shade=True)
         plt.title(f"{self.name}'s Velocity (Kernel Density Estimate) over {len(speeds_in_range) / 20} seconds")
         plt.xlabel("Speed (units/s)")
         plt.ylabel("Density Estimate")
@@ -207,29 +268,24 @@ class PlayerStats:
             print(f"[INFO] Plot saved as: {plot_path}.")
 
 
-    def plot_velocities_pdf(self, include_lava=False, save=False):
-        def pdf(x):
-            y = 1 / (x.std() * np.sqrt(2 * np.pi)) * np.exp(-(x - x.mean())**2 / (2 * x.std()**2))
-            return y
-        
-        self.calculate_lateral_velocities()
+    def pdf(self, x):
+        y = 1 / (x.std() * np.sqrt(2 * np.pi)) * np.exp(-(x - x.mean())**2 / (2 * x.std()**2))
+        return y
 
-        if not include_lava:
-            self._parse_tag_times()
-            speeds = self.pruned_speeds
-        else:
-            speeds = self.speeds
+
+    def plot_velocities_pdf(self, include_lava=False, raw=False, save=False):
+        speeds = self.speeds_mapping[(include_lava, raw)]
 
         plt.figure(figsize=(21, 9))
 
         # remove super large velocities
         speeds_in_range = speeds[(speeds > 0) & (speeds < 11)]
         
-        y = pdf(speeds_in_range)
+        y = self.pdf(speeds_in_range)
 
-        plt.scatter(speeds_in_range, y, s=25, color='blue')
+        plt.scatter(speeds_in_range, y, s=25, color=self.color_mapping[tuple(speeds)])
         plt.title(f"{self.name}'s Velocity (Probability Density Function) over {len(speeds_in_range) / 20} seconds")
-        plt.xlabel("Speed (units/s)")
+        plt.xlabel("Speed (m/s)")
         plt.ylabel("Density Estimate")
         plt.show()
         if save:
@@ -242,3 +298,62 @@ class PlayerStats:
             plt.savefig(plot_path)
             print(f"[INFO] Plot saved as: {plot_path}.")
         
+
+    def plot_all(self, save=False):
+        # graphs (12 total)
+        # pdf, kde, histogram (3)
+        # raw, smooth, pruned raw, pruned smooth (4)
+
+        fig, axs = plt.subplots(nrows=3, ncols=1, figsize=(21, 21))
+
+        label_mapping = ['all raw', 'all smooth', 'untagged raw', 'untagged smooth']
+
+        # ax1: PDF; ax2: KDE; ax3: histogram
+        for i, speeds in enumerate([self.raw_speeds, self.smooth_speeds, self.pruned_raw_speeds, self.pruned_smooth_speeds]):
+            color = self.colors[i]
+            label = label_mapping[i]
+            alpha = 0.5
+            
+            # set data range from (0, 11)
+            speeds_in_range = speeds[(speeds > 0) & (speeds < 11)]
+            y = self.pdf(speeds_in_range)
+            
+            # plots
+            axs[0].scatter(speeds_in_range, y, color=color, label=label, alpha=alpha) # pdf
+            sns.kdeplot(speeds_in_range, ax=axs[1], color=color, fill=True, label=label, alpha=alpha)
+            axs[2].hist(speeds_in_range, bins=np.arange(0, 11.25, .25), color=color, label=label, alpha=alpha)
+
+        # x-axis shared
+        fig.text(0.5, 0.04, 'Speed (m/s)', ha='center') # , fontsize=12)
+        xticks = list(range(12))
+        axs[0].set_xticks(xticks)
+        axs[1].set_xticks(xticks)
+        axs[2].set_xticks(xticks)
+
+        # y-axis
+        axs[0].set_ylabel('Density Estimate')
+        axs[1].set_ylabel('Density Estimate')
+        axs[2].set_ylabel('Frequency (Count)')
+
+        # legends
+        axs[0].legend()
+        axs[1].legend()
+        axs[2].legend()
+
+        # titles
+        axs[0].set_title('PDF')
+        axs[1].set_title('KDE')
+        axs[2].set_title('Histogram')
+        fig.suptitle(f'{self.name} (id: {self.id}): Lateral Speeds from Replay')
+
+        plt.show()
+
+        if save:
+            plot_path = Path("replays") / f"{self.name}_pdf.png"
+            counter = 1
+            while os.path.exists(plot_path):
+                counter_str = str(counter).zfill(2)
+                plot_path = plot_path.name.append(f"_{counter_str}.png")
+
+            plt.savefig(plot_path)
+            print(f"[INFO] Plot saved as: {plot_path}.")

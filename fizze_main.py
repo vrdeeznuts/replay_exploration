@@ -195,5 +195,5 @@ def GenGraph(velocitys, Names):
     plt.show()
 
 if __name__ == "__main__":
-    file = "replay_files\PRETSOD3-8-2023+9-16-42+PM+-+Copy.txt"
+    file = "replay_files\SILLY716-11-2023 9-14-49 PM.txt"
     main(file)
