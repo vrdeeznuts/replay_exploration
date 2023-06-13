@@ -64,7 +64,7 @@ class Replay:
         return players_stats
 
 
-    def join_duplicate_ids(self, all_players):
+    def join_duplicate_ids(self):
         # if a player leaves and joins back (i.e., there are multiple entries in playerDatas 
         # that contain the same id), merge the data into a single object
         pass
