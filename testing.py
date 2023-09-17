@@ -8,7 +8,7 @@ import seaborn as sns
 
 if __name__ == "__main__":
     base_path = Path('replay_files')
-    file = "SCRIMWW4536-12-2023 9-34-29 PM.txt"
+    file = "TTTVADRNL9-1-2023 6-46-14 PM.txt"
     
     replay = Replay(base_path / file)
     
@@ -17,17 +17,18 @@ if __name__ == "__main__":
     colors = sns.color_palette('Set2', n_colors=len(replay.players_stats))
     
     for i, player in enumerate(replay.players_stats):
-        if 'gorilla' in player.name.lower() or 'mins' in player.name.lower() or 'ref' in player.name.lower():
+        if 'gorilla' == player.name.lower() or 'mins' in player.name.lower() or 'ref' in player.name.lower():
             continue
         
         speeds = player.pruned_smooth_speeds
-        x = speeds[(speeds > 0) & (speeds < 11)]
+        x = speeds[(speeds > 7) & (speeds <= 11)]
         y = player.pdf(x)
-        ax.scatter(x, y, s=3, color=colors[i], label=player.name) # , alpha=0.5)
+        ax.scatter(x, y, s=3, color=colors[i], label=f"{player.name}, {len(x)} samples") # , alpha=0.5)
         
     ax.set_title('Lateral Speeds (PDF)')
     ax.set_xlabel('Speed (m/s)')
-    ax.set_xticks(list(range(12)))
+    ax.set_xticks(list(range(7, 11, 1)))
+    # ax.set_xlim([10, 11])
     ax.set_ylabel('Density Estimate')
     
     legend = ax.legend()
@@ -37,4 +38,4 @@ if __name__ == "__main__":
     # plt.legend()
     plt.show()
     
-    plt.savefig("WWSCRIM.png")
+    fig.savefig("ttt_vs_cheaters.png")
