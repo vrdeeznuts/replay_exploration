@@ -7,9 +7,11 @@ dis is me jus lookin at da datas
 - Run `pip install -r requirements.txt`
 - Drop your replay file(s) into the da folder called `data`
 - Rename the replay file to something shorter for ease of use (optional)
-- Run `python main.py -i replay_file.txt`
+- Run `python main.py -i path/to/your/replay_file.txt`
 - ???
 - Profit
+
+You might have to pip install some extra packages I haven't updated the `requirements.txt` in months...
 
 # What does this code do?
 ion wanna explain allat rn so just run it and see. There's no viruses I promise!
